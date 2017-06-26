@@ -1,0 +1,324 @@
+#include "Arduino.h"
+#include <String.h>
+#include <IPaddress.h>
+#include <ESP8266WiFi.h>
+void parse (String s);
+
+String parsed[3];
+//const char* ssid = "FRANCONET";
+//const char* password = "CARLOSfranco";
+
+//const char* ssid = "Flia. Lazo";
+//const char* password = "m9sf-gbon-jhgl";
+
+const char* ssid = "MSI";
+const char* password = "12345678";
+
+String nuevo_ssid;
+String nuevo_password;
+String nuevo_servidor;
+
+IPAddress host;
+
+//const char* ID = "44444";
+//const char* ID = "33333";
+const char* ID = "22222";
+//const char* ID = "11111";
+
+int pin=0;
+int Valorantiguo;
+int Valornuevo=0;
+int flag=0;
+unsigned long tiempo = 300000;
+
+void buscar_server();
+void config();
+void conexion_nueva();
+void envio_datos();
+void keepalive();
+
+//----------------------------------------------------------------------------
+//CONFIGURACION PREDETERMINADA
+void setup()
+{
+	Serial.begin(9600); // Se comienza la conexión a la red Wifi
+	pinMode(pin,INPUT);
+	Serial.println();
+	Serial.println();
+	Serial.print("Conectando a ");
+	Serial.println(ssid);
+
+	WiFi.begin(ssid, password);
+
+	while (WiFi.status() != WL_CONNECTED)
+	{
+	delay(500);
+	Serial.print(".");
+	}
+
+	Serial.println("");
+	Serial.println("WiFi conectado");
+	Serial.println("IP address: ");
+	Serial.println(WiFi.localIP());
+
+	buscar_server();
+	config();
+	conexion_nueva();
+	keepalive();
+
+}
+
+//---------------------------------------------------------------------------
+// LOOP PRINCIPAL
+void loop(){
+
+	if(flag==0){
+		Valornuevo=digitalRead(pin);
+		Serial.print("El primer valor de entrada es: ");
+		Serial.println(Valornuevo);
+		envio_datos();
+		Valorantiguo=Valornuevo;
+		flag++;
+	}
+	else{
+		Valornuevo=digitalRead(pin);
+		if(Valornuevo!=Valorantiguo){
+			Serial.print("El valor de entrada es: ");
+			Serial.println(Valornuevo);
+			envio_datos();
+			Valorantiguo=Valornuevo;
+		}
+	}
+
+	if (millis()>tiempo) {
+		Serial.println("KEEPALIVE");
+		keepalive();
+		tiempo=tiempo+300000;
+		return;
+		}
+}
+
+
+//CONFIGURACION INICIAL DEL DISPOSITIVO
+void config(){
+
+	Serial.print("Conectando a ");
+	Serial.println(host);
+
+	 // Uso de la clase WiFiClient para crear conexion TCP
+	 WiFiClient client;
+	 const int httpPort = 80;
+
+	 if (!client.connect(host, httpPort))
+	 {
+		 Serial.println("connection failed");
+		 return;
+	 }
+
+ // Creacion del URL request
+	 String url = "/config.php";
+	 String key = "?pass=";
+	 String id = "&id=";
+	 String valor = "&valor=";
+
+	 Serial.print("Requesting URL: ");
+	 Serial.println(url);
+
+ // Se envia el request al servidor
+	 client.print(String("GET ") + url + key + " HTTP/1.1\r\n" +
+	 "Host: " + host + "\r\n" +
+	 "Connection: close\r\n\r\n");
+	 unsigned long timeout = millis();
+	 while (client.available() == 0)
+	 {
+		 if (millis() - timeout > 5000)
+		 {
+			 Serial.println(">>> Client Timeout !");
+			 client.stop();
+			 return;
+		 }
+	 }
+
+// Lee todas las lineas de respuesta del servidor y las imprime en el Serial
+int i = 0;
+String s;
+while (client.available())
+{
+	String line = client.readStringUntil('\r');
+	if (i == 8) s = line;
+	i++;
+}
+
+parse(s);
+nuevo_ssid.remove(0,0);
+Serial.println();
+WiFi.disconnect();
+Serial.println("Conexion terminada");
+
+
+}
+
+//SEPARA LOS NUEVOS DATOS QUE RECIBE DE config.php
+void parse (String s) {
+		int cont=1;
+		int j = 0;
+    for (int i = 1; i < s.length(); ++i) {
+        if (s[i] == ';') {
+            if(cont==1) {
+						nuevo_ssid=parsed[j];
+						}
+						if(cont==2){
+						nuevo_password=parsed[j];
+						}
+						j++;
+            cont++;
+
+        		} else {
+			parsed[j].concat(s[i]);
+        }
+    }
+	nuevo_servidor=parsed[2];
+	Serial.println();
+}
+
+// BUSCA UN SERVIDOR
+void buscar_server() {
+	WiFiClient client;
+	const int httpPort = 80;
+
+	host[0] = WiFi.localIP()[0];
+	host[1] = WiFi.localIP()[1];
+	host[2] = WiFi.localIP()[2];
+	host[3] = 168;
+	Serial.println();
+	Serial.println("BUSCANDO SERVIDOR");
+	while (host[3] < 255) {
+		if (client.connect(host, httpPort) ){
+			Serial.print("Servidor encontrado en: ");
+			Serial.println(String(host[0]) + '.' + String(host[1]) + '.' + String(host[2]) + '.' + String(host[3]));
+			return;
+		}
+		else {
+			Serial.print(String(host[0]) + '.' + String(host[1]) + '.' + String(host[2]) + '.' + String(host[3]));
+			Serial.println(" Conexion fallida");
+		}
+		host[3]++;
+	}
+}
+
+//REALIZA LA NUEVA CONEXION CON LOS DATOS RECIBIDOS DE config.php
+void conexion_nueva(){
+	Serial.println();
+  Serial.print("Conectando a ");
+  Serial.println(nuevo_ssid);
+
+  WiFi.begin(nuevo_ssid.c_str(), nuevo_password.c_str());
+
+  while (WiFi.status() != WL_CONNECTED)
+  {
+  delay(500);
+  Serial.print(".");
+  }
+
+  Serial.println("");
+  Serial.println("WiFi conectado");
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
+}
+
+//PROCEDIMIENTO PARA EL ENVIO DE DATOS AL NUEVO HOST
+void envio_datos(){
+	Serial.print("Conectando a ");
+	Serial.println(nuevo_servidor);
+
+	 // Uso de la clase WiFiClient para crear conexion TCP
+	 WiFiClient client;
+	 const int httpPort = 80;
+
+	 if (!client.connect(nuevo_servidor.c_str(), httpPort))
+	 {
+		 Serial.println("connection failed");
+		 return;
+	 }
+
+ // Creacion del URL request
+ String url = "/set.php";
+ String key = "?pass=";
+ String id = "&id=";
+ String valor = "&valor=";
+ String tipo = "&tipo=Soy un interruptor";
+
+ Serial.print("Requesting URL: ");
+ Serial.println(url);
+
+	 // Manda el request al server
+	client.print(String("GET ") + url + key + id + ID + valor + Valornuevo + tipo + " HTTP/1.1\r\n" +
+	"Host: " + host + "\r\n" +
+	"Connection: close\r\n\r\n");
+	unsigned long timeout = millis();
+	while (client.available() == 0) {
+				if (millis() - timeout > 5000) {
+					Serial.println(">>> Client Timeout !");
+					client.stop();
+					return;
+				}
+			}
+ 	// Lee todas las lineas de respuesta del servidor y las imprime en el Serial
+	while (client.available())
+		{
+			String line = client.readStringUntil('\r');
+			Serial.print(line);
+		}
+
+		Serial.println();
+		Serial.println("Conexion terminada");
+
+}
+
+void keepalive(){
+	Serial.print("Conectando a ");
+	Serial.println(nuevo_servidor);
+
+	 // Uso de la clase WiFiClient para crear conexion TCP
+	 WiFiClient client;
+	 const int httpPort = 80;
+
+	 if (!client.connect(nuevo_servidor.c_str(), httpPort))
+	 {
+		 Serial.println("connection failed");
+		 return;
+	 }
+
+ // Creacion del URL request
+ String url = "/keepalive.php";
+ String key = "?pass=";
+ String id = "&id=";
+ String valor = "&valor=";
+ String tipo = "&tipo=Soy un interruptor";
+
+ Serial.print("Requesting URL: ");
+ Serial.println(url);
+
+	 // Manda el request al server
+	client.print(String("GET ") + url + key + id + ID + valor + Valornuevo + tipo + " HTTP/1.1\r\n" +
+	"Host: " + host + "\r\n" +
+	"Connection: close\r\n\r\n");
+	unsigned long timeout = millis();
+	while (client.available() == 0) {
+				if (millis() - timeout > 5000) {
+					Serial.println(">>> Client Timeout !");
+					client.stop();
+					return;
+				}
+			}
+ 	// Lee todas las lineas de respuesta del servidor y las imprime en el Serial
+	while (client.available())
+		{
+			String line = client.readStringUntil('\r');
+			Serial.print(line);
+		}
+
+		Serial.println();
+		Serial.println("Conexion terminada");
+
+}
